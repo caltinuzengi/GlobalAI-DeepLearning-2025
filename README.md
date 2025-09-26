@@ -2,92 +2,128 @@
 
 ## Car Brand Classification — Custom CNN (from scratch) vs. Transfer Baselines
 
-### Goal
-Classify 33 car brands from images using a custom CNN.  
-Document not only results but also **failures** and **lessons learned**.
+### 🎯 Goal
+Classify **33 car brands** from images.  
+Report not only working models but also **failures, root-cause analysis, and transfer learning baselines**.
 
 ---
 
-### Dataset
+## 📂 Dataset
 - Source: *Car Brand Classification Dataset* (Kaggle).  
-- Balanced: ~349 train, 75 val, 75 test per class.  
-- Splits provided in folders (`train/val/test`).  
-- Challenge: logos are often **small or absent**, making this a fine-grained recognition task.
+- Balanced: ~349 train, 75 validation, 75 test per class.  
+- Structured in `train/`, `val/`, `test/`.  
+- **Challenge factors:**
+  - Logos are often **small, occluded, or absent**.  
+  - Mixed viewpoints (front, side, rear, interior).  
+  - A **fine-grained recognition** problem.
 
 ---
 
-### Approach
+## 🧪 Approach
 
-#### Custom CNN (from scratch)
-- 3 Conv blocks (32→64→128), GAP, Dropout, FC(256→33).
-- No pretrained weights; trained from scratch.
-- Optimizer: AdamW (lr=3e-3, wd=5e-5).
-- Loss: CrossEntropy + label smoothing 0.05.
-- Augment: Resize→(Random|Center)Crop(224), HFlip, mild ColorJitter.
+### 1. Custom CNN (from scratch)
+- **Architecture**:  
+  - Conv blocks (32 → 64 → 128 filters)  
+  - ReLU activations  
+  - MaxPooling  
+  - Global Average Pooling  
+  - Dropout  
+  - Dense (256 → 33 outputs)  
+- **Training setup**:  
+  - Optimizer: AdamW (`lr=3e-3`, `wd=5e-5`)  
+  - Loss: CrossEntropy + Label Smoothing (0.05)  
+  - Scheduler: ReduceLROnPlateau  
+  - Augmentation: Resize(256) → Random/CenterCrop(224), HFlip, mild ColorJitter  
 
-#### HPO
-Random search across filters, kernel, dense units, dropout, lr, batch size, optimizer.  
-Best configs still collapsed.
+### 2. Hyperparameter Optimization
+- Random search over filters, kernel sizes, dense units, dropout, learning rate, batch size, optimizer.  
+- Best configs did not escape **collapse (~0.03 accuracy)**.
 
-#### BatchNorm Variant
-A SmallCarCNN_BN was tested — did not improve meaningfully; some runs worse.
+### 3. BatchNorm Variant
+- Added BatchNorm layers (SmallCarCNN_BN).  
+- Training curves more stable but still collapsed.  
 
----
-
-### Results
-
-- **Validation/Test Accuracy:** ~0.03 (random baseline).  
-- **Confusion Matrix:** almost all predictions collapsed into one class.  
-- **Grad-CAM:** heatmaps often ignored logos, focusing on background.
-
-Screenshots:  
-- `assets/confusion_matrix.png` (collapsed predictions)  
-- `assets/gradcam.png` (logo ignored)
-
----
-
-### Analysis — Why Collapse?
-
-1. **Model capacity too small**: 32–128 conv filters cannot capture fine brand cues.  
-2. **No BatchNorm (baseline)**: unstable gradients → collapse.  
-3. **Aggressive augmentations**: initial RandomResizedCrop cut out logos.  
-4. **Learning dynamics**: ReduceLROnPlateau shrank LR too early, halting learning.  
-5. **Task difficulty**: fine-grained brand recognition, small cues.
+### 4. Transfer Learning Baseline
+- **Model**: EfficientNet-B0 (`timm`, pretrained on ImageNet).  
+- **Training setup**:  
+  - AdamW (`lr=3e-4`, `wd=1e-4`)  
+  - CosineAnnealingLR (T_max=8)  
+  - 8 epochs (2-epoch frozen backbone, then fine-tuned)  
+- **Augmentation**: same as custom CNN.  
 
 ---
 
-### Comparison with Transfer Baseline
-Pretrained models (ReXNet-150, EfficientNet-B2) on the same dataset achieve **~0.69 test accuracy** with balanced confusion matrices.  
-This highlights the gap between **from-scratch CNNs** vs. **transfer learning**.
+## 📊 Results
+
+### Custom CNN (from scratch)
+- Validation/Test Accuracy: **~0.03** (random baseline).  
+- Loss stuck near log(33) ≈ 3.49.  
+- Confusion Matrix: collapsed into a single class.  
+- Grad-CAM: irrelevant background focus.  
+
+### Transfer Learning (EfficientNet-B0)
+- **Val Accuracy**: 0.665  
+- **Test Accuracy**: 0.667  
+- **Macro F1**: 0.665  
+- **Per-class**: Many brands reach 0.70–0.83 F1 (e.g. FIAT, GMC, Jeep, Ram).  
+- Confusion Matrix: balanced diagonal, errors among visually similar brands (BMW vs Mercedes, Lexus vs Toyota).  
+- Grad-CAM:  
+  - Correct=1651, Wrong=824  
+  - Heatmaps focus on **logos and front grilles**, confirming meaningful features.  
 
 ---
 
-### Lessons Learned
+## ⚖️ Comparison
 
-- From-scratch small CNNs fail to train on fine-grained datasets.  
-- Transfer learning is crucial when discriminative features (logos) are small and subtle.  
-- Sanity tests like “overfit 32 images” are essential before full training.  
-- Augmentation must preserve key signals (logos).  
-
----
-
-### Next Steps
-
-- Use pretrained models with transfer learning.  
-- Increase resolution to 256/288.  
-- Add BatchNorm/SE blocks, deeper filters.  
-- Modern schedulers (Cosine, OneCycle).  
-- Mixup/CutMix cautiously.
+| Model                | Val Acc | Test Acc | CM Pattern          | Grad-CAM Focus        |
+|----------------------|---------|----------|---------------------|-----------------------|
+| SmallCarCNN          | ~0.03   | ~0.03    | Collapsed           | Background / random   |
+| SmallCarCNN + BN     | ~0.03   | ~0.03    | Still collapsed     | Background            |
+| EfficientNet-B0 (TL) | 0.665   | 0.667    | Balanced diagonal   | Logos / grilles       |
 
 ---
 
-### Reproduction
+## 🔍 Analysis
 
-- Kaggle Notebook: [https://www.kaggle.com/code/altnzengi/car-brand-classification-with-custom-cnn]  
-- Run order: Env → Paths → Transforms → EDA → Model → Training → Save → Eval → Grad-CAM.  
-- Outputs: confusion matrices, Grad-CAM visualizations.
+### Why collapse in custom CNN?
+1. **Model too small** (32–128 filters).  
+2. **No pretrained features** for fine-grained cues.  
+3. **Aggressive crops** initially cut logos out.  
+4. **Scheduler** reduced LR too early, reinforcing stagnation.  
+5. **Fine-grained nature**: logos too small for scratch CNN.
+
+### Why TL succeeds?
+- Pretrained filters already capture **edges, textures, logo shapes**.  
+- Fine-tuning aligns them to car-specific patterns.  
+- Larger backbone capacity (~4M params) enables discriminative learning.
 
 ---
 
-## License
-Educational purpose only. Dataset: Kaggle Car Brand Classification.
+## 🧠 Lessons Learned
+- From-scratch CNNs fail on fine-grained datasets.  
+- Transfer learning yields >0.66 accuracy with moderate training.  
+- **Grad-CAM** is essential to verify feature focus (logos vs irrelevant).  
+- Balanced datasets don’t guarantee learning without strong architectures.  
+- **Reproducibility**: Documenting collapse is as important as success.
+
+---
+
+## 🚀 Next Steps
+- Use larger models (EfficientNet-B2/B3, ConvNeXt).  
+- Increase resolution (256–288) to capture small logos.  
+- Progressive unfreezing + OneCycleLR.  
+- Regularization: Mixup/CutMix with care.  
+- Monitor with TensorBoard / Weights & Biases.  
+
+---
+
+## 📝 Reproduction
+- Kaggle Notebook: [Car Brand Classification with Custom CNN](https://www.kaggle.com/code/altnzengi/car-brand-classification-with-custom-cnn)  
+- Run order: Env → Paths → Transforms → EDA → CNN → HPO → BN Variant → Training → Evaluation → Grad-CAM → Transfer Learning.  
+- Outputs: training curves, confusion matrices, Grad-CAM overlays.  
+
+---
+
+## 📜 License
+Educational purpose only.  
+Dataset: Kaggle Car Brand Classification.  
